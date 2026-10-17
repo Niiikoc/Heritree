@@ -179,3 +179,8 @@ export interface Undo {
   label: string;
   action: UndoAction;
 }
+
+export type FileVersion =
+  | { kind: "worktree"; path: string }
+  | { kind: "index"; path: string }
+  | { kind: "commit"; rev: string; path: string };

@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { RepoApi } from "../api";
-import type { BlameLine, CommitInfo, DiffLine, FileDiff, Hunk, LineRef } from "../types";
+import type { BlameLine, CommitInfo, DiffLine, FileDiff, FileVersion, Hunk, LineRef } from "../types";
+import { ImageDiff, imageMime } from "./ImageDiff";
 import type { Ask, Run } from "../ui";
 import { highlightLine, languageFor } from "../highlight";
 import { fullDate, timeAgo } from "../format";
@@ -60,9 +61,11 @@ export function DiffView({ api, workdir, target, version, run, ask, onClose, onS
     };
   }, [api, target, version]);
 
+  const section = useRef<HTMLElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !document.querySelector(".modal, .context-menu")) onClose();
+      const visible = section.current?.offsetParent != null; // not in a hidden tab
+      if (e.key === "Escape" && visible && !document.querySelector(".modal, .context-menu")) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -78,6 +81,17 @@ export function DiffView({ api, workdir, target, version, run, ask, onClose, onS
   };
 
   const language = useMemo(() => languageFor(target.path), [target.path]);
+
+  // Images get a picture of before and after instead of (or for SVG, as well as) text.
+  const images = useMemo((): [FileVersion | null, FileVersion | null] | null => {
+    if (!imageMime(target.path)) return null;
+    const path = target.path;
+    const oldPath = target.oldPath ?? path;
+    if (target.kind === "commit")
+      return [{ kind: "commit", rev: `${target.id}^`, path: oldPath }, { kind: "commit", rev: target.id, path }];
+    if (target.staged) return [{ kind: "commit", rev: "HEAD", path: oldPath }, { kind: "index", path }];
+    return [target.untracked ? null : { kind: "index", path }, { kind: "worktree", path }];
+  }, [target]);
   const pickedRefs = useMemo(
     () => [...picked].map((k) => ({ hunk: +k.split(":")[0], line: +k.split(":")[1] })),
     [picked],
@@ -158,7 +172,7 @@ export function DiffView({ api, workdir, target, version, run, ask, onClose, onS
   const lineCount = diff?.hunks.reduce((n, h) => n + h.lines.length, 0) ?? 0;
 
   return (
-    <section className="diff-view" aria-label={`Changes in ${path}`}>
+    <section ref={section} className="diff-view" aria-label={`Changes in ${path}`}>
       <header className="diff-header">
         <button className="icon-button" onClick={onClose} title="Back to the graph (Esc)">
           ←
@@ -177,7 +191,7 @@ export function DiffView({ api, workdir, target, version, run, ask, onClose, onS
             </button>
           ))}
         </div>
-        {tab === "diff" && (
+        {tab === "diff" && !images && (
           <div className="segmented">
             <button className={mode === "inline" ? "active" : undefined} onClick={() => setModeSaved("inline")}>
               Inline
@@ -196,7 +210,7 @@ export function DiffView({ api, workdir, target, version, run, ask, onClose, onS
             <button onClick={() => setPicked(new Set())}>Clear</button>
           </span>
         )}
-        {selectable && picked.size === 0 && tab === "diff" && (
+        {selectable && !images && picked.size === 0 && tab === "diff" && (
           <span className="hint-inline">Click line numbers to pick lines, Shift+click for a range.</span>
         )}
       </div>
@@ -206,7 +220,8 @@ export function DiffView({ api, workdir, target, version, run, ask, onClose, onS
       {tab === "diff" && (
         <div className={`diff-body ${mode}`}>
           {error && <p className="error pad">{error}</p>}
-          {diff?.binary && <p className="empty pad">Binary file. There are no lines to show.</p>}
+          {images && <ImageDiff api={api} path={path} before={images[0]} after={images[1]} version={version} />}
+          {diff?.binary && !images && <p className="empty pad">Binary file. There are no lines to show.</p>}
           {diff && !diff.binary && diff.hunks.length === 0 && (
             <p className="empty pad">{working?.untracked ? "Empty file." : "No changes in the file contents (only its mode or name changed)."}</p>
           )}

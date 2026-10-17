@@ -79,6 +79,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body,
 #root {
@@ -1519,4 +1523,63 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Repository switcher and image diffs */
+.repo-switch .chevron {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.switcher-entry {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.switcher-entry .muted {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.switcher-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.image-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 16px;
+  font-family: var(--font);
+}
+
+.image-side {
+  margin: 0;
+  min-width: 0;
+}
+
+.image-side figcaption {
+  margin-bottom: 6px;
+}
+
+.checkerboard {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: repeating-conic-gradient(var(--bg-sunken) 0 25%, var(--bg) 0 50%) 0 0 / 16px 16px;
+}
+
+.checkerboard img {
+  max-width: 100%;
+  max-height: 60vh;
 }

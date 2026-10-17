@@ -15,10 +15,12 @@
 
 ## What it does today
 
-- **Repositories:** open, clone, create; several repositories in tabs; recent list.
+- **Repositories:** open, clone, create; several repositories in tabs that stay loaded in the background; quick
+  switcher (Ctrl+P, Ctrl+Tab, Ctrl+1…9); add every repository found in a folder at once.
 - **Changes:** stage and unstage whole files, hunks or single lines; discard (with Undo); commit, amend,
   co-authors, commit templates.
-- **Diffs:** inline or side by side, with syntax highlighting; file history and blame.
+- **Diffs:** inline or side by side, with syntax highlighting; before and after for images; file history and blame.
+- **Live:** refreshes by itself when files change on disk or another tool (terminal, IDE) runs git.
 - **History:** commit graph with search (message, author, SHA); commit details with changed files; which branches
   contain a commit.
 - **Branches and tags:** create, check out, rename, delete, merge, rebase, cherry-pick, revert, reset; drag a

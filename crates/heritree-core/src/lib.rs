@@ -8,6 +8,7 @@
 
 pub mod diff;
 mod error;
+mod files;
 mod git_cli;
 pub mod graph;
 mod history;
@@ -19,6 +20,7 @@ pub mod status;
 
 pub use diff::{DiffLine, FileDiff, Hunk, LineKind, LineRef};
 pub use error::{Error, Result};
+pub use files::{FileVersion, find_repositories};
 pub use git_cli::{CommandRecord, command_log};
 pub use graph::{Edge, EdgeKind, GraphRow};
 pub use lineage::{BranchLineage, LineageSource};

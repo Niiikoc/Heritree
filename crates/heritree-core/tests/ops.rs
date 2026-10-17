@@ -303,3 +303,64 @@ fn every_write_lands_in_the_command_log() {
             .any(|r| r.command == "git add -A -- logged.txt" && r.ok)
     );
 }
+
+#[test]
+fn reads_file_versions_and_ignores() {
+    use heritree_core::FileVersion;
+    let (dir, repo) = repo();
+    fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
+    fs::write(dir.path().join("file.txt"), "on disk\n").unwrap();
+
+    let read = |v: FileVersion| {
+        repo.file_version(&v)
+            .unwrap()
+            .map(|b| String::from_utf8(b).unwrap())
+    };
+    assert_eq!(
+        read(FileVersion::Worktree {
+            path: "file.txt".into()
+        })
+        .as_deref(),
+        Some("on disk\n")
+    );
+    assert_eq!(
+        read(FileVersion::Commit {
+            rev: "HEAD".into(),
+            path: "file.txt".into()
+        })
+        .as_deref(),
+        Some("one\ntwo\nthree\nfour\nfive\n")
+    );
+    assert_eq!(
+        read(FileVersion::Commit {
+            rev: "HEAD^".into(),
+            path: "file.txt".into()
+        }),
+        None
+    );
+    assert_eq!(
+        read(FileVersion::Index {
+            path: "missing.txt".into()
+        }),
+        None
+    );
+
+    let ignored = repo
+        .ignored(&["build.log".into(), "file.txt".into()])
+        .unwrap();
+    assert_eq!(ignored, ["build.log"]);
+    assert!(repo.ignored(&["file.txt".into()]).unwrap().is_empty());
+}
+
+#[test]
+fn finds_repositories_below_a_folder() {
+    let root = tempfile::tempdir().unwrap();
+    for name in ["a", "group/b"] {
+        let path = root.path().join(name);
+        fs::create_dir_all(&path).unwrap();
+        git(&path, &["init", "-q"]);
+    }
+    fs::create_dir_all(root.path().join("node_modules/c/.git")).unwrap();
+    let found = heritree_core::find_repositories(root.path(), 3);
+    assert_eq!(found.len(), 2, "{found:?}");
+}

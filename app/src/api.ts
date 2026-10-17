@@ -14,6 +14,7 @@ import type {
   LogRow,
   RefInfo,
   RepoInfo,
+  FileVersion,
   ResetMode,
   StashEntry,
   Undo,
@@ -25,6 +26,10 @@ export const cloneRepository = (url: string, parent: string, name: string) =>
   invoke<string>("clone_repository", { url, parent, name });
 export const initRepository = (path: string) => invoke<void>("init_repository", { path });
 export const commandLog = () => invoke<CommandRecord[]>("command_log");
+export const findRepositories = (root: string) => invoke<string[]>("find_repositories", { root });
+/** Starts sending "repo-changed" events for `repo`; see src-tauri/src/watch.rs. */
+export const watchRepository = (repo: string) => invoke<void>("watch_repository", { repo });
+export const unwatchRepository = (repo: string) => invoke<void>("unwatch_repository", { repo });
 
 /** All commands for one repository. */
 export function repoApi(repo: string) {
@@ -46,6 +51,8 @@ export function repoApi(repo: string) {
     stashes: () => call<StashEntry[]>("stashes"),
     remotes: () => call<string[]>("remotes"),
     commitTemplate: () => call<string | null>("commit_template"),
+    /** Raw bytes; empty when the file does not exist at that version. */
+    fileBytes: (version: FileVersion) => call<ArrayBuffer>("file_bytes", { version }),
 
     stage: (paths: string[]) => call<void>("stage", { paths }),
     unstage: (paths: string[]) => call<void>("unstage", { paths }),

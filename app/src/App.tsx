@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as api from "./api";
 import type { Answers, AskOptions } from "./ui";
 import { RepoView } from "./RepoView";
 import { Dialog } from "./components/Dialog";
 import type { PaletteCommand } from "./components/Palette";
+import { folderName, RepoSwitcher } from "./components/RepoSwitcher";
 
 const RECENT_KEY = "heritree.recentRepositories";
 const TABS_KEY = "heritree.openTabs";
+const RECENT_LIMIT = 50;
 
 function load(key: string): string[] {
   try {
@@ -25,7 +27,6 @@ function save(key: string, list: string[]) {
   }
 }
 
-const folderName = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
 /** "https://github.com/acme/tool.git" → "tool". */
 const repoNameFromUrl = (url: string) =>
@@ -43,8 +44,16 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [dialog, setDialog] = useState<(AskOptions & { resolve: (a: Answers | null) => void }) | null>(null);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => save(TABS_KEY, tabs), [tabs]);
+
+  const remember = (paths: string[]) => {
+    const list = [...new Set([...paths, ...load(RECENT_KEY)])].slice(0, RECENT_LIMIT);
+    save(RECENT_KEY, list);
+    setRecent(list);
+  };
 
   const ask = (options: AskOptions) => new Promise<Answers | null>((resolve) => setDialog({ ...options, resolve }));
 
@@ -64,9 +73,7 @@ export function App() {
         setActive(t.length);
         return [...t, root];
       });
-      const list = [root, ...load(RECENT_KEY).filter((p) => p !== root)].slice(0, 10);
-      save(RECENT_KEY, list);
-      setRecent(list);
+      remember([root]);
     } catch (e) {
       setError(String(e));
       setActive(-1);
@@ -117,6 +124,46 @@ export function App() {
     }
   };
 
+  /** Finds every repository in a folder (e.g. `source/repos`) so it shows up in the switcher. */
+  const addFolder = async () => {
+    const root = await open({ directory: true, title: "Folder that contains your repositories" });
+    if (typeof root !== "string") return;
+    setBusy("Looking for repositories");
+    try {
+      const found = await api.findRepositories(root);
+      remember([...recent, ...found.filter((p) => !recent.includes(p))]);
+      setNotice(
+        found.length
+          ? `Found ${found.length} repositor${found.length === 1 ? "y" : "ies"}. Press Ctrl+P to switch between them.`
+          : "No repositories in that folder.",
+      );
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Ctrl+P switcher, Ctrl+Tab / Ctrl+Shift+Tab to cycle, Ctrl+1…9 to jump.
+  const keys = useRef<(e: KeyboardEvent) => void>(() => {});
+  keys.current = (e: KeyboardEvent) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    if (e.key.toLowerCase() === "p" && !e.shiftKey) {
+      setSwitcherOpen(true);
+    } else if (e.key === "Tab" && tabs.length > 1) {
+      const from = active < 0 ? 0 : active;
+      setActive((from + (e.shiftKey ? tabs.length - 1 : 1)) % tabs.length);
+    } else if (/^[1-9]$/.test(e.key) && Number(e.key) <= tabs.length) {
+      setActive(Number(e.key) - 1);
+    } else return;
+    e.preventDefault();
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keys.current(e);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const closeTab = (index: number) => {
     setTabs((t) => t.filter((_, i) => i !== index));
     setActive((a) => (a > index ? a - 1 : a === index ? Math.min(index, tabs.length - 2) : a));
@@ -126,16 +173,17 @@ export function App() {
     { id: "open", label: "Open repository…", keywords: "folder", run: pickFolder },
     { id: "clone", label: "Clone repository…", keywords: "download url", run: clone },
     { id: "init", label: "Create new repository…", keywords: "init", run: init },
+    { id: "switch", label: "Switch repository…", hint: "Ctrl+P", keywords: "repo tab", run: () => setSwitcherOpen(true) },
+    { id: "add-folder", label: "Add repositories from a folder…", keywords: "import scan", run: addFolder },
     ...tabs.map((t, i) => ({ id: `tab-${t}`, label: `Switch to ${folderName(t)}`, keywords: t, run: () => setActive(i) })),
   ];
 
-  const current = active >= 0 ? tabs[active] : undefined;
 
   return (
     <div className="shell">
       <nav className="tabs" aria-label="Open repositories">
         {tabs.map((t, i) => (
-          <div key={t} className={`tab${i === active ? " active" : ""}`} title={t}>
+          <div key={t} className={`tab${i === active ? " active" : ""}`} title={i < 9 ? `${t}\nCtrl+${i + 1}` : t}>
             <button className="tab-label" onClick={() => setActive(i)}>
               {folderName(t)}
             </button>
@@ -149,9 +197,11 @@ export function App() {
         </button>
       </nav>
 
-      {current ? (
-        <RepoView key={current} path={current} appCommands={appCommands} />
-      ) : (
+      {/* Every open tab stays mounted, so switching back keeps its selection, diff and undo history. */}
+      {tabs.map((t, i) => (
+        <RepoView key={t} path={t} active={i === active} appCommands={appCommands} onSwitchRepo={() => setSwitcherOpen(true)} />
+      ))}
+      {active < 0 && (
         <main className="welcome">
           <img src="/icon.png" alt="" width={72} height={72} />
           <h1>Heritree</h1>
@@ -167,7 +217,11 @@ export function App() {
               New repository…
             </button>
           </div>
+          <button className="link" onClick={addFolder} disabled={!!busy}>
+            Add all repositories from a folder…
+          </button>
           {busy && <p className="muted">{busy}…</p>}
+          {notice && <p className="muted">{notice}</p>}
           {error && <p className="error">{error}</p>}
           {recent.length > 0 && (
             <section className="recent">
@@ -186,6 +240,16 @@ export function App() {
         </main>
       )}
 
+      {switcherOpen && (
+        <RepoSwitcher
+          tabs={tabs}
+          active={active}
+          known={recent}
+          onPick={(path) => (tabs.includes(path) ? setActive(tabs.indexOf(path)) : openPath(path))}
+          onAddFolder={addFolder}
+          onClose={() => setSwitcherOpen(false)}
+        />
+      )}
       {dialog && (
         <Dialog
           {...dialog}

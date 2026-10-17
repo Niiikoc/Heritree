@@ -4,12 +4,14 @@
 //! independent, and every command runs on a blocking worker thread so a slow
 //! repository or network never freezes the window.
 
+mod watch;
+
 use std::path::{Path, PathBuf};
 
 use heritree_core::{
     BlameLine, BranchLineage, CommandRecord, CommitDetails, CommitInfo, ConflictSide, FileDiff,
-    FileStatus, GraphRow, LineRef, RefInfo, RepoInfo, Repository, ResetMode, StashEntry, Undo,
-    UndoAction, graph,
+    FileStatus, FileVersion, GraphRow, LineRef, RefInfo, RepoInfo, Repository, ResetMode,
+    StashEntry, Undo, UndoAction, graph,
 };
 use serde::Serialize;
 
@@ -144,6 +146,19 @@ async fn remotes(repo: String) -> CmdResult<Vec<String>> {
 #[tauri::command]
 async fn commit_template(repo: String) -> CmdResult<Option<String>> {
     with_repo(repo, |r| Ok(r.commit_template())).await
+}
+
+/// Raw bytes of a file at some version (for image diffs); empty if it does not exist there.
+#[tauri::command]
+async fn file_bytes(repo: String, version: FileVersion) -> CmdResult<tauri::ipc::Response> {
+    let bytes = with_repo(repo, move |r| r.file_version(&version)).await?;
+    Ok(tauri::ipc::Response::new(bytes.unwrap_or_default()))
+}
+
+/// Repositories at most three folders below `root`.
+#[tauri::command]
+async fn find_repositories(root: String) -> CmdResult<Vec<String>> {
+    blocking(move || Ok(heritree_core::find_repositories(Path::new(&root), 3))).await
 }
 
 #[tauri::command]
@@ -364,7 +379,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(watch::Watchers::default())
         .invoke_handler(tauri::generate_handler![
+            watch::watch_repository,
+            watch::unwatch_repository,
+            file_bytes,
+            find_repositories,
             open_repository,
             repo_info,
             list_refs,

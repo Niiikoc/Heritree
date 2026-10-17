@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { repoApi } from "./api";
+import { listen } from "@tauri-apps/api/event";
+import { repoApi, unwatchRepository, watchRepository } from "./api";
 import type { BranchLineage, CommitInfo, FileStatus, LogRow, RefInfo, RepoInfo, ResetMode, StashEntry, Undo } from "./types";
 import { type Answers, type AskOptions, isTyping, type MenuItem, type OpenMenu } from "./ui";
 import { Sidebar, type BranchView, type DragPayload } from "./components/Sidebar";
@@ -26,8 +27,12 @@ interface RepoData {
 
 interface Props {
   path: string;
+  /** Only the visible tab reacts to shortcuts and refreshes right away. */
+  active: boolean;
   /** App-wide commands for the palette. */
   appCommands: PaletteCommand[];
+  /** Opens the repository switcher. */
+  onSwitchRepo: () => void;
 }
 
 function stored<T extends string>(key: string, fallback: T): T {
@@ -47,7 +52,7 @@ function store(key: string, value: string) {
 }
 
 /** One open repository: toolbar, sidebar, graph or diff, details. */
-export function RepoView({ path, appCommands }: Props) {
+export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
   const api = useMemo(() => repoApi(path), [path]);
 
   const [data, setData] = useState<RepoData | null>(null);
@@ -100,12 +105,33 @@ export function RepoView({ path, appCommands }: Props) {
     });
   }, [refresh]);
 
-  // Pick up changes made outside the app (terminal, editor) when coming back.
+  // Pick up changes made outside the app (editor, terminal) as they happen.
+  // A hidden tab only notes that it is out of date and catches up when shown.
+  const stale = useRef(false);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   useEffect(() => {
-    const onFocus = () => refresh(false);
+    watchRepository(path).catch(() => {});
+    const unlisten = listen<string>("repo-changed", (e) => {
+      if (e.payload !== path) return;
+      if (activeRef.current) refresh();
+      else stale.current = true;
+    });
+    const onFocus = () => activeRef.current && refresh(false);
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [refresh]);
+    return () => {
+      unwatchRepository(path).catch(() => {});
+      unlisten.then((stop) => stop());
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [path, refresh]);
+
+  useEffect(() => {
+    if (active && stale.current) {
+      stale.current = false;
+      refresh();
+    }
+  }, [active, refresh]);
 
   // ---- Plumbing for actions --------------------------------------------------
 
@@ -418,7 +444,7 @@ export function RepoView({ path, appCommands }: Props) {
 
   const shortcuts = useRef<(e: KeyboardEvent) => void>(() => {});
   shortcuts.current = (e: KeyboardEvent) => {
-    if (dialog || paletteOpen) return;
+    if (!active || dialog || paletteOpen || document.querySelector(".modal-backdrop")) return;
     const mod = e.ctrlKey || e.metaKey;
     if (!mod) return;
     const k = e.key.toLowerCase();
@@ -513,7 +539,7 @@ export function RepoView({ path, appCommands }: Props) {
   }
 
   if (!data || !info) {
-    return <div className="loading">{error ? <p className="error pad">{error}</p> : <p className="empty pad">Opening…</p>}</div>;
+    return <div className="loading" hidden={!active}>{error ? <p className="error pad">{error}</p> : <p className="empty pad">Opening…</p>}</div>;
   }
 
   const { refs, rows, status, stashes } = data;
@@ -524,8 +550,11 @@ export function RepoView({ path, appCommands }: Props) {
   const lastUndo = undos.at(-1);
 
   return (
-    <div className={`app${showLog ? " with-log" : ""}`}>
+    <div className={`app${showLog ? " with-log" : ""}`} hidden={!active}>
       <header className="toolbar">
+        <button className="repo-switch" onClick={onSwitchRepo} title="Switch repository (Ctrl+P)">
+          <strong>{info.name}</strong> <span className="chevron">▾</span>
+        </button>
         <span className="branch-pill" title={upstream ? `Tracking ${upstream.name}` : "No upstream yet; Push sets it"}>
           ⎇ {headLabel}
           {upstream && (upstream.ahead > 0 || upstream.behind > 0) && (

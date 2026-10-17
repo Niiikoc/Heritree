@@ -38,14 +38,20 @@ pub fn command_log() -> Vec<CommandRecord> {
 
 /// Runs a read-only `git <args>` in `dir` and returns its stdout. Not logged.
 pub(crate) fn run(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    output(dir, args, None)
+    output(dir, args, None, false)
+}
+
+/// Like [`run`] with input on stdin, for commands such as `check-ignore` that
+/// exit with 1 to mean "no match" rather than failure.
+pub(crate) fn run_lenient(dir: &Path, args: &[&str], stdin: &[u8]) -> Result<Vec<u8>> {
+    output(dir, args, Some(stdin), true)
 }
 
 /// Runs a `git` command that changes the repository and records it in the
 /// command log, whether it succeeds or not.
 pub(crate) fn exec(dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
     let started = Instant::now();
-    let result = output(dir, args, stdin);
+    let result = output(dir, args, stdin, false);
     let record = CommandRecord {
         dir: dir.display().to_string(),
         command: shell_words(args),
@@ -65,7 +71,7 @@ pub(crate) fn exec(dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Ve
     result
 }
 
-fn output(dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
+fn output(dir: &Path, args: &[&str], stdin: Option<&[u8]>, exit_one_ok: bool) -> Result<Vec<u8>> {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(dir)
@@ -94,7 +100,7 @@ fn output(dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
         std::thread::spawn(move || pipe.write_all(&input));
     }
     let output = child.wait_with_output().map_err(Error::GitNotFound)?;
-    if !output.status.success() {
+    if !output.status.success() && !(exit_one_ok && output.status.code() == Some(1)) {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         // Merge and cherry-pick report conflicts on stdout.
         let message = if stderr.is_empty() {
