@@ -1,7 +1,8 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import type { LogRow, RefInfo } from "../types";
+import type { CommitInfo, LogRow, RefInfo } from "../types";
 import { fullDate, timeAgo } from "../format";
 import { GraphCell, LANE_WIDTH } from "./GraphCell";
+import { DRAG_TYPE } from "./Sidebar";
 
 export const ROW_HEIGHT = 28;
 const OVERSCAN = 10;
@@ -16,13 +17,39 @@ interface Props {
   onSelect: (id: string | null) => void;
   /** Bump to scroll `selectedId` into view. */
   scrollRequest: number;
+  /** Branches created at each commit, from lineage. */
+  forksByCommit: Map<string, string[]>;
+  /** Search text; when set, only matching commits are listed (without the graph). */
+  query: string;
+  onContextMenu: (commit: CommitInfo, e: React.MouseEvent) => void;
+}
+
+function matches(commit: CommitInfo, query: string): boolean {
+  const q = query.toLowerCase();
+  return (
+    commit.summary.toLowerCase().includes(q) ||
+    commit.authorName.toLowerCase().includes(q) ||
+    commit.authorEmail.toLowerCase().includes(q) ||
+    commit.id.startsWith(q)
+  );
 }
 
 /**
  * The commit list with its graph column. Only the visible rows are rendered,
  * so a repository with 100k commits scrolls as smoothly as one with 10.
  */
-export function CommitList({ rows, refsByCommit, headId, changeCount, selectedId, onSelect, scrollRequest }: Props) {
+export function CommitList({
+  rows: allRows,
+  refsByCommit,
+  headId,
+  changeCount,
+  selectedId,
+  onSelect,
+  scrollRequest,
+  forksByCommit,
+  query,
+  onContextMenu,
+}: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(600);
@@ -35,9 +62,14 @@ export function CommitList({ rows, refsByCommit, headId, changeCount, selectedId
     return () => observer.disconnect();
   }, []);
 
-  // Graph column width: widest row, at least two lanes.
-  const lanes = useMemo(() => Math.max(2, ...rows.map((r) => r.graph.width)), [rows]);
-  const offset = changeCount > 0 ? 1 : 0; // the "uncommitted changes" row
+  const filtering = query.trim().length > 0;
+  const rows = useMemo(
+    () => (filtering ? allRows.filter((r) => matches(r.commit, query.trim())) : allRows),
+    [allRows, query, filtering],
+  );
+  // Graph column width: widest row, at least two lanes. Hidden while searching.
+  const lanes = useMemo(() => (filtering ? 0 : Math.max(2, ...rows.map((r) => r.graph.width))), [rows, filtering]);
+  const offset = changeCount > 0 && !filtering ? 1 : 0; // the "uncommitted changes" row
   const total = rows.length + offset;
 
   useEffect(() => {
@@ -85,26 +117,43 @@ export function CommitList({ rows, refsByCommit, headId, changeCount, selectedId
     }
     const { commit, graph } = rows[i - offset];
     const refs = refsByCommit.get(commit.id) ?? [];
+    const forks = forksByCommit.get(commit.id) ?? [];
     items.push(
       <div
         key={commit.id}
-        className={`row${selectedId === commit.id ? " selected" : ""}`}
+        className={`row${selectedId === commit.id ? " selected" : ""}${commit.id === headId ? " head" : ""}`}
         style={style}
         onClick={() => onSelect(commit.id)}
+        onContextMenu={(e) => {
+          onSelect(commit.id);
+          onContextMenu(commit, e);
+        }}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ type: "commit", id: commit.id }));
+          e.dataTransfer.effectAllowed = "copy";
+        }}
       >
         <div className="col-graph" style={{ width: lanes * LANE_WIDTH }}>
-          <GraphCell
-            row={graph}
-            height={ROW_HEIGHT}
-            lanes={lanes}
-            isMerge={commit.parents.length > 1}
-            isHead={commit.id === headId}
-          />
+          {!filtering && (
+            <GraphCell
+              row={graph}
+              height={ROW_HEIGHT}
+              lanes={lanes}
+              isMerge={commit.parents.length > 1}
+              isHead={commit.id === headId}
+            />
+          )}
         </div>
         <div className="col-summary">
           {refs.map((r) => (
             <span key={r.name} className={`ref-badge ref-${r.kind}`} title={r.name}>
               {r.shortName}
+            </span>
+          ))}
+          {forks.map((f) => (
+            <span key={f} className="ref-badge fork-badge" title={`${f} was created from here`}>
+              ⑂ {f}
             </span>
           ))}
           <span className="summary-text">{commit.summary}</span>
@@ -139,6 +188,7 @@ export function CommitList({ rows, refsByCommit, headId, changeCount, selectedId
         onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
       >
         <div style={{ height: total * ROW_HEIGHT, position: "relative" }}>{items}</div>
+        {filtering && rows.length === 0 && <p className="empty pad">No loaded commit matches “{query.trim()}”.</p>}
       </div>
     </div>
   );

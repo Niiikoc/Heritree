@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use gix::bstr::ByteSlice;
 use gix::refs::Category;
@@ -6,13 +6,13 @@ use gix::revision::walk::Sorting;
 use gix::traverse::commit::simple::CommitTimeOrder;
 
 use crate::{
-    CommitInfo, Error, FileStatus, HeadInfo, RefInfo, RefKind, RepoInfo, Result, git_cli, graph,
-    status,
+    BranchUpstream, CommitInfo, Error, FileStatus, HeadInfo, RefInfo, RefKind, RepoInfo, RepoState,
+    Result, git_cli, graph, status,
 };
 
 /// An open repository.
 pub struct Repository {
-    inner: gix::Repository,
+    pub(crate) inner: gix::Repository,
 }
 
 impl Repository {
@@ -44,11 +44,80 @@ impl Repository {
             unborn: head.is_unborn(),
         };
 
+        let upstream = if head.branch.is_some() && !head.unborn {
+            self.upstream()
+        } else {
+            None
+        };
         Ok(RepoInfo {
             name,
             git_dir,
             workdir,
             head,
+            state: self.state(),
+            upstream,
+        })
+    }
+
+    /// The folder git commands run in: the working tree, or the git dir of a bare repository.
+    pub(crate) fn dir(&self) -> &Path {
+        self.inner.workdir().unwrap_or_else(|| self.inner.git_dir())
+    }
+
+    pub(crate) fn workdir(&self) -> Result<PathBuf> {
+        self.inner.workdir().map(Path::to_owned).ok_or(Error::Bare)
+    }
+
+    /// Runs a read-only git command in the repository.
+    pub(crate) fn git(&self, args: &[&str]) -> Result<String> {
+        let out = git_cli::run(self.dir(), args)?;
+        Ok(String::from_utf8_lossy(&out).into_owned())
+    }
+
+    /// Runs a git command that changes the repository, and logs it.
+    pub(crate) fn exec(&self, args: &[&str]) -> Result<String> {
+        let out = git_cli::exec(self.dir(), args, None)?;
+        Ok(String::from_utf8_lossy(&out).into_owned())
+    }
+
+    pub(crate) fn exec_with_input(&self, args: &[&str], input: &[u8]) -> Result<String> {
+        let out = git_cli::exec(self.dir(), args, Some(input))?;
+        Ok(String::from_utf8_lossy(&out).into_owned())
+    }
+
+    /// A merge, rebase, cherry-pick or revert that stopped on conflicts.
+    pub fn state(&self) -> Option<RepoState> {
+        let dir = self.inner.git_dir();
+        if dir.join("rebase-merge").exists() || dir.join("rebase-apply").exists() {
+            Some(RepoState::Rebasing)
+        } else if dir.join("MERGE_HEAD").exists() {
+            Some(RepoState::Merging)
+        } else if dir.join("CHERRY_PICK_HEAD").exists() {
+            Some(RepoState::CherryPicking)
+        } else if dir.join("REVERT_HEAD").exists() {
+            Some(RepoState::Reverting)
+        } else {
+            None
+        }
+    }
+
+    fn upstream(&self) -> Option<BranchUpstream> {
+        let name = self
+            .git(&[
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ])
+            .ok()?;
+        let counts = self
+            .git(&["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
+            .ok()?;
+        let mut parts = counts.split_whitespace().map(|n| n.parse().unwrap_or(0));
+        Some(BranchUpstream {
+            name: name.trim().to_owned(),
+            ahead: parts.next().unwrap_or(0),
+            behind: parts.next().unwrap_or(0),
         })
     }
 
