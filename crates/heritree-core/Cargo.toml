@@ -1,0 +1,19 @@
+[package]
+name = "heritree-core"
+description = "Git engine behind Heritree: repository reading, commit graph layout and branch lineage."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+gix.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

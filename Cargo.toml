@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = ["crates/heritree-core", "crates/heritree-cli", "app/src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Niiikoc/Heritree"
+authors = ["Heritree contributors"]
+
+[workspace.dependencies]
+heritree-core = { path = "crates/heritree-core" }
+gix = { version = "0.89", default-features = false, features = ["max-performance-safe", "revision", "sha1"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+tempfile = "3"
+ureq = { version = "3", features = ["json", "platform-verifier"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

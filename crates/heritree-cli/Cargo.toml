@@ -1,0 +1,18 @@
+[package]
+name = "heritree-cli"
+description = "Command-line front end to heritree-core, used for debugging and tests."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "heritree"
+path = "src/main.rs"
+
+[dependencies]
+heritree-core.workspace = true
+clap.workspace = true
+serde_json.workspace = true
