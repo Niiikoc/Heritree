@@ -1,1 +1,93 @@
-# Heritree
+<p align="center">
+  <img src="app/src-tauri/icons/128x128@2x.png" width="96" alt="Heritree logo">
+</p>
+
+<h1 align="center">Heritree</h1>
+
+<p align="center">
+  A free, open source Git client for Windows, Linux and macOS that shows where every branch came from.
+</p>
+
+---
+
+> **Status: early development.** Heritree can open a repository and show its branches, commit graph and
+> working-tree changes. It cannot change anything yet. See the [roadmap](#roadmap).
+
+## Why another Git client?
+
+- **Branch lineage.** Git does not record which branch a branch was created from. Heritree works it out and remembers it,
+  so you can see that `hotfix/2.4.1` came from `release/2.4`, which came from `main`, and which fixes are missing where.
+- **Everything free.** No paid tier and no account. Licensed under the GPL, so it stays that way.
+- **Fast.** A Rust core on [gitoxide](https://github.com/GitoxideLabs/gitoxide) and a small [Tauri](https://tauri.app)
+  shell instead of Electron.
+- **Never hides Git.** Every action will show the `git` command it runs, and writes go through your own `git`, so hooks,
+  credentials and config behave exactly as on the command line.
+
+## Roadmap
+
+| Phase | Goal |
+| --- | --- |
+| 0. Foundations (now) | Workspace, Rust core reading refs, log and status, first graph, CI on all three platforms |
+| 1. MVP alpha | Stage, commit, branch, merge, cherry-pick, revert, stash, push/pull, first lineage tree |
+| 2. Public beta | Interactive rebase, conflict editor, GitHub/GitLab integration, installers |
+| 3. v1.0 | Full lineage with release compare and backport, worktrees, submodules, LFS, signing |
+
+## Project layout
+
+```text
+crates/heritree-core   Git engine: reading repositories, graph layout, (soon) lineage
+crates/heritree-cli    `heritree` command, the same engine without the UI
+app/                   Desktop app: React + TypeScript UI
+app/src-tauri          Tauri shell exposing heritree-core to the UI
+```
+
+## Building from source
+
+You need:
+
+- [Rust](https://rustup.rs) (stable)
+- [Node.js](https://nodejs.org) 20 or newer
+- `git` on your `PATH`
+- The [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS
+  (WebView2 on Windows, which Windows 10 and 11 already have; `libwebkit2gtk-4.1-dev` and friends on Linux)
+
+Run the desktop app in development mode:
+
+```sh
+cd app
+npm install
+npm run tauri dev
+```
+
+Build an installer for your platform:
+
+```sh
+cd app
+npm run tauri build
+```
+
+Try the engine from the command line:
+
+```sh
+cargo run -p heritree-cli -- log -n 30          # graph of the current repository
+cargo run -p heritree-cli -- -C ../other status  # another repository
+cargo run -p heritree-cli -- log --json          # exactly what the app receives
+```
+
+Run the checks CI runs:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+The Tauri crate embeds the built UI, so run `npm run build` in `app/` once before building the whole workspace.
+
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+
+## License
+
+Heritree is free software, released under the [GNU General Public License v3.0 or later](LICENSE).
