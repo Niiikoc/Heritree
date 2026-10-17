@@ -13,6 +13,10 @@ pub struct RepoInfo {
     /// Path of the working tree, `None` for bare repositories.
     pub workdir: Option<String>,
     pub head: HeadInfo,
+    /// Set while a merge, rebase, cherry-pick or revert waits on conflicts.
+    pub state: Option<RepoState>,
+    /// Tracking branch of the current branch, if it has one.
+    pub upstream: Option<BranchUpstream>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -85,4 +89,68 @@ pub struct FileStatus {
     pub staged: Option<ChangeKind>,
     /// Change in the working tree that is not staged yet.
     pub unstaged: Option<ChangeKind>,
+}
+
+/// An operation git is in the middle of, waiting for conflicts to be resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RepoState {
+    Merging,
+    Rebasing,
+    CherryPicking,
+    Reverting,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchUpstream {
+    /// e.g. `origin/main`.
+    pub name: String,
+    /// Commits on the local branch that the upstream lacks.
+    pub ahead: u32,
+    /// Commits on the upstream that the local branch lacks.
+    pub behind: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StashEntry {
+    /// Position in the stash list: `stash@{index}`.
+    pub index: usize,
+    pub id: String,
+    pub message: String,
+    pub time: i64,
+}
+
+/// A file touched by a commit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangedFile {
+    pub path: String,
+    pub original_path: Option<String>,
+    pub kind: ChangeKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitDetails {
+    pub id: String,
+    /// The whole message, not only the summary line.
+    pub message: String,
+    pub committer_name: String,
+    pub committer_email: String,
+    pub commit_time: i64,
+    /// Compared with the first parent (or nothing, for a root commit).
+    pub files: Vec<ChangedFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlameLine {
+    pub line: u32,
+    pub commit: String,
+    pub author_name: String,
+    pub author_time: i64,
+    pub summary: String,
+    pub text: String,
 }

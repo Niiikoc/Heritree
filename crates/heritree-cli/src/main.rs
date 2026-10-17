@@ -43,6 +43,17 @@ enum Command {
     },
     /// Show staged and unstaged changes.
     Status,
+    /// Show which branch each local branch was created from.
+    Lineage,
+    /// Show the diff of one file in the working tree.
+    Diff {
+        path: String,
+        /// The staged changes instead of the unstaged ones.
+        #[arg(long)]
+        staged: bool,
+    },
+    /// Show a commit's message and changed files.
+    Show { commit: String },
 }
 
 fn main() -> ExitCode {
@@ -148,6 +159,56 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                         code(f.unstaged),
                         f.path
                     );
+                }
+            }
+        }
+        Command::Lineage => {
+            let lineage = repo.lineage()?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&lineage)?);
+            } else {
+                for b in lineage {
+                    match (&b.parent, b.source) {
+                        (Some(parent), Some(source)) => println!(
+                            "{:<28} from {parent} ({source:?}), {} ahead, {} behind",
+                            b.name, b.ahead, b.behind
+                        ),
+                        _ => println!("{:<28} root", b.name),
+                    }
+                }
+            }
+        }
+        Command::Diff { path, staged } => {
+            let status = repo.status()?;
+            let untracked = !staged
+                && status.iter().any(|f| {
+                    f.path == path && f.unstaged == Some(heritree_core::ChangeKind::Untracked)
+                });
+            let diff = repo.file_diff(&path, None, staged, untracked)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&diff)?);
+            } else {
+                for hunk in &diff.hunks {
+                    println!("{}", hunk.header);
+                    for line in &hunk.lines {
+                        let sign = match line.kind {
+                            heritree_core::LineKind::Added => '+',
+                            heritree_core::LineKind::Removed => '-',
+                            heritree_core::LineKind::Context => ' ',
+                        };
+                        println!("{sign}{}", line.text);
+                    }
+                }
+            }
+        }
+        Command::Show { commit } => {
+            let details = repo.commit_details(&commit)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&details)?);
+            } else {
+                println!("{}\n\n{}", details.id, details.message);
+                for f in details.files {
+                    println!("  {:?} {}", f.kind, f.path);
                 }
             }
         }
