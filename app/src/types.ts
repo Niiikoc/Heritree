@@ -180,6 +180,39 @@ export interface Undo {
   action: UndoAction;
 }
 
+export type HostKind = "github" | "gitlab" | "bitbucket" | "azuredevops" | "other";
+
+export interface PullRequestDraft {
+  branch: string;
+  remote: string;
+  /** `upstream` when the branch lives in a fork. */
+  targetRemote: string;
+  host: HostKind;
+  webUrl: string;
+  bases: string[];
+  base: string | null;
+  title: string;
+  body: string;
+  onRemote: boolean;
+  unpushed: number;
+  /** False when the browser finishes the pull request. */
+  viaApi: boolean;
+}
+
+export interface NewPullRequest {
+  branch: string;
+  base: string;
+  title: string;
+  body: string;
+  draft: boolean;
+}
+
+export interface PullRequest {
+  url: string;
+  number: number | null;
+  outcome: "created" | "alreadyOpen" | "openInBrowser";
+}
+
 export type FileVersion =
   | { kind: "worktree"; path: string }
   | { kind: "index"; path: string }

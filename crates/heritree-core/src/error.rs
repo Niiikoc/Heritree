@@ -22,6 +22,10 @@ pub enum Error {
 
     #[error("could not parse git output: {0}")]
     Parse(String),
+
+    /// GitHub, GitLab or another hosting site refused or could not be reached.
+    #[error("{0}")]
+    Hosting(String),
 }
 
 impl Error {

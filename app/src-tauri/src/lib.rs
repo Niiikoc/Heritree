@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use heritree_core::{
     BlameLine, BranchLineage, CommandRecord, CommitDetails, CommitInfo, ConflictSide, FileDiff,
-    FileStatus, FileVersion, GraphRow, LineRef, RefInfo, RepoInfo, Repository, ResetMode,
-    StashEntry, Undo, UndoAction, graph,
+    FileStatus, FileVersion, GraphRow, LineRef, NewPullRequest, PullRequest, PullRequestDraft,
+    RefInfo, RepoInfo, Repository, ResetMode, StashEntry, Undo, UndoAction, graph,
 };
 use serde::Serialize;
 
@@ -336,6 +336,16 @@ async fn push(repo: String, force: bool) -> CmdResult<()> {
 }
 
 #[tauri::command]
+async fn pull_request_draft(repo: String, branch: Option<String>) -> CmdResult<PullRequestDraft> {
+    with_repo(repo, move |r| r.pull_request_draft(branch.as_deref())).await
+}
+
+#[tauri::command]
+async fn create_pull_request(repo: String, request: NewPullRequest) -> CmdResult<PullRequest> {
+    with_repo(repo, move |r| r.create_pull_request(&request)).await
+}
+
+#[tauri::command]
 async fn stash_push(
     repo: String,
     message: Option<String>,
@@ -382,6 +392,8 @@ pub fn run() {
         .manage(watch::Watchers::default())
         .invoke_handler(tauri::generate_handler![
             watch::watch_repository,
+            pull_request_draft,
+            create_pull_request,
             watch::unwatch_repository,
             file_bytes,
             find_repositories,

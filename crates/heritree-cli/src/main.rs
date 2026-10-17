@@ -54,6 +54,8 @@ enum Command {
     },
     /// Show a commit's message and changed files.
     Show { commit: String },
+    /// Show the pull request Heritree would open for a branch (default: the current one).
+    PrDraft { branch: Option<String> },
 }
 
 fn main() -> ExitCode {
@@ -209,6 +211,22 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}\n\n{}", details.id, details.message);
                 for f in details.files {
                     println!("  {:?} {}", f.kind, f.path);
+                }
+            }
+        }
+        Command::PrDraft { branch } => {
+            let draft = repo.pull_request_draft(branch.as_deref())?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&draft)?);
+            } else {
+                let base = draft.base.as_deref().unwrap_or("?");
+                println!(
+                    "{} → {}/{base} on {}",
+                    draft.branch, draft.target_remote, draft.web_url
+                );
+                println!("{}\n\n{}", draft.title, draft.body);
+                if draft.unpushed > 0 {
+                    println!("({} commits to push first)", draft.unpushed);
                 }
             }
         }

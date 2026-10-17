@@ -10,6 +10,9 @@ import type {
   CommitInfo,
   FileDiff,
   FileStatus,
+  NewPullRequest,
+  PullRequest,
+  PullRequestDraft,
   LineRef,
   LogRow,
   RefInfo,
@@ -88,6 +91,9 @@ export function repoApi(repo: string) {
     fetch: () => call<void>("fetch"),
     pull: (rebase: boolean) => call<Undo>("pull", { rebase }),
     push: (force: boolean) => call<void>("push", { force }),
+    pullRequestDraft: (branch: string | null) => call<PullRequestDraft>("pull_request_draft", { branch }),
+    /** Pushes the branch if needed, then creates the pull request or returns the browser page for it. */
+    createPullRequest: (request: NewPullRequest) => call<PullRequest>("create_pull_request", { request }),
     stashPush: (message: string | null, includeUntracked: boolean) =>
       call<Undo>("stash_push", { message, includeUntracked }),
     stashApply: (index: number, pop: boolean) => call<void>("stash_apply", { index, pop }),

@@ -18,7 +18,8 @@ use crate::{Error, Result};
 pub struct CommandRecord {
     /// Folder the command ran in.
     pub dir: String,
-    /// The command as you would type it, e.g. `git commit -m "Fix login"`.
+    /// The command as you would type it, e.g. `git commit -m "Fix login"`, or the
+    /// web request for actions that go to GitHub or GitLab instead of git.
     pub command: String,
     pub ok: bool,
     /// What git printed when the command failed.
@@ -47,14 +48,25 @@ pub(crate) fn run_lenient(dir: &Path, args: &[&str], stdin: &[u8]) -> Result<Vec
     output(dir, args, Some(stdin), true)
 }
 
+/// Like [`run`] with input on stdin. Not logged, so it may carry secrets.
+pub(crate) fn run_with_input(dir: &Path, args: &[&str], stdin: &[u8]) -> Result<Vec<u8>> {
+    output(dir, args, Some(stdin), false)
+}
+
 /// Runs a `git` command that changes the repository and records it in the
 /// command log, whether it succeeds or not.
 pub(crate) fn exec(dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
     let started = Instant::now();
     let result = output(dir, args, stdin, false);
+    record(dir, shell_words(args), &result, started);
+    result
+}
+
+/// Adds a finished command to the command log.
+pub(crate) fn record<T>(dir: &Path, command: String, result: &Result<T>, started: Instant) {
     let record = CommandRecord {
         dir: dir.display().to_string(),
-        command: shell_words(args),
+        command,
         ok: result.is_ok(),
         error: result.as_ref().err().map(ToString::to_string),
         time: SystemTime::now()
@@ -68,7 +80,6 @@ pub(crate) fn exec(dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Ve
         log.pop_front();
     }
     log.push_back(record);
-    result
 }
 
 fn output(dir: &Path, args: &[&str], stdin: Option<&[u8]>, exit_one_ok: bool) -> Result<Vec<u8>> {

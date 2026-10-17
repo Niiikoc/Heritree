@@ -43,7 +43,15 @@ export function Dialog({ title, message, command, fields = [], confirm, danger, 
             <label key={f.name} className="field">
               <span>{f.label}</span>
               <span className="field-row">
-                {f.multiline ? (
+                {f.options ? (
+                  <select autoFocus={i === 0} value={String(values[f.name])} onChange={(e) => set(f.name, e.target.value)}>
+                    {f.options.map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </select>
+                ) : f.multiline ? (
                   <textarea
                     autoFocus={i === 0}
                     rows={4}

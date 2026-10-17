@@ -4,7 +4,10 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use heritree_core::{ChangeKind, LineKind, LineRef, LineageSource, Repository, ResetMode};
+use heritree_core::{
+    ChangeKind, HostKind, LineKind, LineRef, LineageSource, NewPullRequest, PullRequestOutcome,
+    Repository, ResetMode,
+};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
@@ -363,4 +366,104 @@ fn finds_repositories_below_a_folder() {
     fs::create_dir_all(root.path().join("node_modules/c/.git")).unwrap();
     let found = heritree_core::find_repositories(root.path(), 3);
     assert_eq!(found.len(), 2, "{found:?}");
+}
+
+#[test]
+fn drafts_and_opens_pull_requests() {
+    let (dir, repo) = repo();
+    let path = dir.path();
+    let remote = tempfile::tempdir().unwrap();
+    git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
+    // Fetch and push go to the local bare repository; the web side is github.com.
+    git(
+        path,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/nick/demo.git",
+        ],
+    );
+    git(
+        path,
+        &[
+            "config",
+            "remote.origin.pushurl",
+            remote.path().to_str().unwrap(),
+        ],
+    );
+    // No stored credentials, so nothing reaches the network.
+    git(path, &["config", "credential.helper", ""]);
+    git(path, &["push", "-q", "-u", "origin", "main"]);
+
+    repo.create_branch("feature/dark-mode", Some("main"), true)
+        .unwrap();
+    for (name, msg) in [("a.txt", "Add tokens"), ("b.txt", "Use tokens")] {
+        fs::write(path.join(name), "x\n").unwrap();
+        git(path, &["add", name]);
+        git(path, &["commit", "-q", "-m", msg]);
+    }
+
+    let draft = repo.pull_request_draft(None).unwrap();
+    assert_eq!(draft.branch, "feature/dark-mode");
+    assert_eq!(draft.host, HostKind::GitHub);
+    assert_eq!(draft.web_url, "https://github.com/nick/demo");
+    assert_eq!(draft.bases, ["main"]);
+    assert_eq!(draft.base.as_deref(), Some("main"));
+    assert_eq!(draft.title, "Dark mode");
+    assert_eq!(draft.body, "- Add tokens\n- Use tokens");
+    assert_eq!(
+        (draft.on_remote, draft.unpushed, draft.via_api),
+        (false, 2, true)
+    );
+
+    // Without credentials Heritree pushes the branch and hands over the browser page.
+    let pr = repo
+        .create_pull_request(&NewPullRequest {
+            branch: draft.branch.clone(),
+            base: "main".into(),
+            title: draft.title.clone(),
+            body: draft.body.clone(),
+            draft: false,
+        })
+        .unwrap();
+    assert_eq!(pr.outcome, PullRequestOutcome::OpenInBrowser);
+    assert!(
+        pr.url
+            .starts_with("https://github.com/nick/demo/compare/main...feature/dark-mode?expand=1&title=Dark%20mode"),
+        "{}",
+        pr.url
+    );
+    assert_eq!(
+        git(remote.path(), &["rev-parse", "feature/dark-mode"]),
+        git(path, &["rev-parse", "feature/dark-mode"])
+    );
+    assert_eq!(
+        git(
+            path,
+            &["rev-parse", "--abbrev-ref", "feature/dark-mode@{upstream}"]
+        ),
+        "origin/feature/dark-mode"
+    );
+
+    // A single commit becomes the title and description.
+    git(path, &["checkout", "-q", "-b", "fix/login", "main"]);
+    fs::write(path.join("c.txt"), "x\n").unwrap();
+    git(path, &["add", "c.txt"]);
+    git(
+        path,
+        &[
+            "commit",
+            "-q",
+            "-m",
+            "Fix login on Safari",
+            "-m",
+            "Cookies were blocked.",
+        ],
+    );
+    let draft = repo.pull_request_draft(None).unwrap();
+    assert_eq!(
+        (draft.title.as_str(), draft.body.as_str()),
+        ("Fix login on Safari", "Cookies were blocked.")
+    );
 }

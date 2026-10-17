@@ -12,6 +12,7 @@ mod files;
 mod git_cli;
 pub mod graph;
 mod history;
+pub mod hosting;
 pub mod lineage;
 mod model;
 pub mod ops;
@@ -23,6 +24,9 @@ pub use error::{Error, Result};
 pub use files::{FileVersion, find_repositories};
 pub use git_cli::{CommandRecord, command_log};
 pub use graph::{Edge, EdgeKind, GraphRow};
+pub use hosting::{
+    HostKind, HostedRepo, NewPullRequest, PullRequest, PullRequestDraft, PullRequestOutcome,
+};
 pub use lineage::{BranchLineage, LineageSource};
 pub use model::{
     BlameLine, BranchUpstream, ChangeKind, ChangedFile, CommitDetails, CommitInfo, FileStatus,

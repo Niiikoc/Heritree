@@ -659,7 +659,7 @@ impl Repository {
         self.exec(&args).map(drop)
     }
 
-    fn default_remote(&self) -> Result<String> {
+    pub(crate) fn default_remote(&self) -> Result<String> {
         if let Ok(remote) = self.git(&["config", "--get", "remote.pushDefault"]) {
             return Ok(remote.trim().to_owned());
         }

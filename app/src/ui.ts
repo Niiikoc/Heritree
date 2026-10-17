@@ -22,6 +22,8 @@ export interface Field {
   /** A checkbox instead of a text field. */
   checkbox?: boolean;
   checked?: boolean;
+  /** A drop-down of these values instead of a text field. */
+  options?: string[];
   /** Adds a "Browse…" button that picks a folder. */
   browse?: boolean;
 }

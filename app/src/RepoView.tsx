@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { repoApi, unwatchRepository, watchRepository } from "./api";
-import type { BranchLineage, CommitInfo, FileStatus, LogRow, RefInfo, RepoInfo, ResetMode, StashEntry, Undo } from "./types";
+import type {
+  BranchLineage,
+  CommitInfo,
+  FileStatus,
+  HostKind,
+  LogRow,
+  PullRequest,
+  RefInfo,
+  RepoInfo,
+  ResetMode,
+  StashEntry,
+  Undo,
+} from "./types";
 import { type Answers, type AskOptions, isTyping, type MenuItem, type OpenMenu } from "./ui";
 import { Sidebar, type BranchView, type DragPayload } from "./components/Sidebar";
 import { CommitList } from "./components/CommitList";
@@ -12,6 +25,14 @@ import { ContextMenu } from "./components/ContextMenu";
 import { Dialog } from "./components/Dialog";
 import { Palette, type PaletteCommand } from "./components/Palette";
 import { GitLogPanel } from "./components/GitLogPanel";
+
+const SITE_NAMES: Record<HostKind, string> = {
+  github: "GitHub",
+  gitlab: "GitLab",
+  bitbucket: "Bitbucket",
+  azuredevops: "Azure DevOps",
+  other: "the remote",
+};
 
 /** Enough for everyday work; paging past it comes later. */
 const LOG_LIMIT = 5000;
@@ -65,6 +86,7 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
   const [undos, setUndos] = useState<Undo[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; url: string } | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [dialog, setDialog] = useState<(AskOptions & { resolve: (a: Answers | null) => void }) | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -194,6 +216,66 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
         confirm: "Pull now",
       });
       if (choice) await doPull();
+    }
+  };
+
+  const pullRequest = async (branch?: string) => {
+    setNotice(null);
+    let draft;
+    try {
+      draft = await api.pullRequestDraft(branch ?? null);
+    } catch (e) {
+      setError(String(e));
+      return;
+    }
+    if (draft.bases.length === 0) {
+      setError(`${draft.targetRemote} has no branches yet. Push the branch it should go into (such as main) first.`);
+      return;
+    }
+    const site = SITE_NAMES[draft.host];
+    const word = draft.host === "gitlab" ? "merge request" : "pull request";
+    const needsPush = !draft.onRemote || draft.unpushed > 0;
+    const notes = [
+      !draft.onRemote
+        ? `${draft.branch} is pushed to ${draft.remote} first.`
+        : draft.unpushed > 0
+          ? `${draft.unpushed} new commit${draft.unpushed === 1 ? " is" : "s are"} pushed to ${draft.remote} first.`
+          : "",
+      draft.viaApi ? "" : `You finish it on ${site} in your browser.`,
+    ].filter(Boolean);
+    const a = await ask({
+      title: `Create ${word} from ${draft.branch}`,
+      message: notes.join(" ") || undefined,
+      fields: [
+        { name: "base", label: `Into (${draft.targetRemote})`, options: draft.bases, value: draft.base ?? draft.bases[0] },
+        { name: "title", label: "Title", value: draft.title },
+        { name: "body", label: "Description", value: draft.body, multiline: true, optional: true },
+        ...(draft.viaApi ? [{ name: "draft", label: "Open as a draft", checkbox: true }] : []),
+      ],
+      command: needsPush ? `git push ${draft.onRemote ? "" : "-u "}${draft.remote} ${draft.branch}` : undefined,
+      confirm: draft.viaApi ? `Create ${word}` : `Continue on ${site}`,
+    });
+    if (!a) return;
+    const out: { pr?: PullRequest } = {};
+    const ok = await run(`Creating ${word}`, async () => {
+      out.pr = await api.createPullRequest({
+        branch: draft.branch,
+        base: String(a.base),
+        title: String(a.title),
+        body: String(a.body),
+        draft: !!a.draft,
+      });
+    });
+    const pr = out.pr;
+    if (!ok || !pr) return;
+    const number = pr.number ? ` #${pr.number}` : "";
+    if (pr.outcome === "openInBrowser") {
+      await openUrl(pr.url).catch(() => {});
+      setNotice({ text: `Finish the ${word} on ${site} in your browser.`, url: pr.url });
+    } else if (pr.outcome === "alreadyOpen") {
+      setNotice({ text: `${draft.branch} already has an open ${word}${number}.`, url: pr.url });
+    } else {
+      setNotice({ text: `Created ${word}${number} on ${site}.`, url: pr.url });
     }
   };
 
@@ -357,6 +439,9 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
             { label: "Pull", hint: "Ctrl+Shift+L", onSelect: () => doPull() },
           ] as MenuItem[])
         : []),
+      ...(ref.kind === "localBranch"
+        ? ([{ label: "Create pull request…", onSelect: () => pullRequest(ref.shortName) }] as MenuItem[])
+        : []),
       "separator",
       { label: "Copy name", onSelect: () => navigator.clipboard.writeText(ref.shortName) },
       ...(ref.kind === "localBranch"
@@ -493,6 +578,7 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
       { id: "pull-rebase", label: "Pull with rebase", run: () => doPull(true) },
       { id: "push", label: "Push", hint: "Ctrl+Shift+P", run: () => doPush(false) },
       { id: "force-push", label: "Force push (with lease)…", run: () => doPush(true) },
+      { id: "pull-request", label: "Create pull request…", keywords: "pr merge request", run: () => pullRequest() },
       { id: "branch", label: "New branch…", hint: "Ctrl+B", keywords: "create", run: () => newBranch() },
       { id: "stash", label: "Stash changes…", keywords: "save", run: stash },
       ...(data.stashes.length
@@ -605,6 +691,9 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
               ▾
             </button>
           </span>
+          <button onClick={() => pullRequest()} disabled={!!busy || !current} title="Create a pull request from this branch">
+            Pull request
+          </button>
         </div>
         <div className="toolbar-group">
           <button onClick={() => newBranch()} disabled={!!busy} title="New branch (Ctrl+B)">
@@ -743,6 +832,17 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
         <div className="toast" role="alert">
           <pre>{error}</pre>
           <button className="small" onClick={() => setError(null)} aria-label="Dismiss">
+            ✕
+          </button>
+        </div>
+      )}
+      {notice && !error && (
+        <div className="toast notice" role="status">
+          <span>{notice.text}</span>
+          <button className="small" onClick={() => openUrl(notice.url)}>
+            Open
+          </button>
+          <button className="small" onClick={() => setNotice(null)} aria-label="Dismiss">
             ✕
           </button>
         </div>
