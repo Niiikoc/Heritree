@@ -27,7 +27,8 @@
   branch or commit onto the current branch to merge or cherry-pick; create, push and delete tags.
 - **Remotes and stash:** fetch, pull (merge or rebase), push (force only with lease); stash, apply, pop, drop.
 - **Pull requests:** create one from any branch on GitHub or GitLab, signed in with the credentials git already
-  uses; it goes into the branch it was created from by default, and is pushed first if needed. Bitbucket and Azure
+  uses; it goes into the branch it was created from by default, and is pushed first if needed. Open pull requests show
+  next to their branch, and a second one into the same branch is not allowed. Bitbucket and Azure
   DevOps (or no stored credentials) open the site's new pull request page, filled in.
 - **Lineage:** branches shown as a tree under the branch they came from, with how sure Heritree is, ahead/behind
   counts, and a marker on the commit where each branch started.

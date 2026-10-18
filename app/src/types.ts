@@ -197,6 +197,17 @@ export interface PullRequestDraft {
   unpushed: number;
   /** False when the browser finishes the pull request. */
   viaApi: boolean;
+  /** Already open from this branch; their bases are left out of `bases`. */
+  open: OpenPullRequest[];
+}
+
+export interface OpenPullRequest {
+  number: number;
+  title: string;
+  url: string;
+  branch: string;
+  base: string;
+  draft: boolean;
 }
 
 export interface NewPullRequest {

@@ -1,5 +1,5 @@
 import { type DragEvent, useMemo, useState } from "react";
-import type { BranchLineage, LineageSource, RefInfo, StashEntry } from "../types";
+import type { BranchLineage, LineageSource, OpenPullRequest, RefInfo, StashEntry } from "../types";
 import type { MenuItem, OpenMenu } from "../ui";
 import { timeAgo } from "../format";
 
@@ -48,6 +48,9 @@ interface Props {
   openMenu: OpenMenu;
   /** Something was dropped on the current branch. */
   onDrop: (payload: DragPayload, x: number, y: number) => void;
+  /** Open pull requests by the local branch they come from. */
+  pulls: Map<string, OpenPullRequest[]>;
+  onOpenPull: (pull: OpenPullRequest) => void;
 }
 
 export function Sidebar(props: Props) {
@@ -149,9 +152,13 @@ function RefItem({
   menuFor,
   openMenu,
   onDrop,
+  pulls,
+  onOpenPull,
 }: Props & { item: RefInfo; label: string; depth: number; current: boolean; extra?: React.ReactNode; title?: string }) {
   const [over, setOver] = useState(false);
   const accepts = current; // drops only ever change the checked-out branch
+  const prs = item.kind === "localBranch" ? (pulls.get(item.shortName) ?? []) : [];
+  const prText = prs.map((p) => `\nPull request #${p.number} into ${p.base}${p.draft ? " (draft)" : ""}: ${p.title}`).join("");
   return (
     <li>
       <button
@@ -160,7 +167,7 @@ function RefItem({
         onClick={() => onPick(item)}
         onDoubleClick={() => onActivate(item)}
         onContextMenu={(e) => openMenu(e, menuFor(item))}
-        title={title ?? `${item.name}\n${item.target.slice(0, 7)}\nDouble-click to check out`}
+        title={(title ?? `${item.name}\n${item.target.slice(0, 7)}\nDouble-click to check out`) + prText}
         draggable={item.kind !== "tag"}
         onDragStart={(e) => {
           e.dataTransfer.setData(DRAG_TYPE, JSON.stringify({ type: "ref", name: item.shortName, kind: item.kind }));
@@ -180,6 +187,21 @@ function RefItem({
       >
         {current && <span className="current-dot" aria-label="current branch" />}
         <span className="ref-label">{label}</span>
+        {prs.map((p) => (
+          <span
+            key={p.number}
+            className={`pr-badge${p.draft ? " draft" : ""}`}
+            role="link"
+            title={`Open pull request #${p.number} into ${p.base}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenPull(p);
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            #{p.number}
+          </span>
+        ))}
         {extra}
       </button>
     </li>

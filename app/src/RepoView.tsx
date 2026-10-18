@@ -8,6 +8,7 @@ import type {
   FileStatus,
   HostKind,
   LogRow,
+  OpenPullRequest,
   PullRequest,
   RefInfo,
   RepoInfo,
@@ -87,6 +88,8 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; url: string } | null>(null);
+  const [pulls, setPulls] = useState<OpenPullRequest[]>([]);
+  const pullsAsked = useRef(0);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [dialog, setDialog] = useState<(AskOptions & { resolve: (a: Answers | null) => void }) | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -155,6 +158,30 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
     }
   }, [active, refresh]);
 
+  // Open pull requests, asked at most once a minute unless something was just pushed.
+  const loadPulls = useCallback(
+    async (force = false) => {
+      if (!force && Date.now() - pullsAsked.current < 60_000) return;
+      pullsAsked.current = Date.now();
+      try {
+        setPulls(await api.openPullRequests());
+      } catch {
+        // No remote or no hosting site: nothing to show.
+      }
+    },
+    [api],
+  );
+
+  useEffect(() => {
+    if (active) loadPulls();
+  }, [active, version, loadPulls]);
+
+  const pullsByBranch = useMemo(() => {
+    const map = new Map<string, OpenPullRequest[]>();
+    for (const p of pulls) map.set(p.branch, [...(map.get(p.branch) ?? []), p]);
+    return map;
+  }, [pulls]);
+
   // ---- Plumbing for actions --------------------------------------------------
 
   const run = useCallback(
@@ -191,10 +218,11 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
   const info = data?.info;
   const current = info && !info.head.detached ? info.head.branch : null;
   const currentLabel = current ?? "the detached HEAD";
+  const currentPulls = (current && pullsByBranch.get(current)) || [];
 
   // ---- Remote --------------------------------------------------------------
 
-  const doFetch = () => run("Fetching", () => api.fetch());
+  const doFetch = () => run("Fetching", () => api.fetch()).then(() => loadPulls(true));
   const doPull = (rebase = pullRebase) => run(rebase ? "Pulling (rebase)" : "Pulling", () => api.pull(rebase));
   const doPush = async (force = false) => {
     if (force) {
@@ -209,6 +237,7 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
       if (!ok) return;
     }
     const ok = await run(force ? "Force pushing" : "Pushing", () => api.push(force));
+    if (ok) loadPulls(true);
     if (!ok && !force && /rejected|non-fast-forward|fetch first/i.test(lastError.current ?? "")) {
       const choice = await ask({
         title: "The remote has commits you don't have",
@@ -228,12 +257,23 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
       setError(String(e));
       return;
     }
+    const site = SITE_NAMES[draft.host];
+    const word = draft.host === "gitlab" ? "merge request" : "pull request";
+    const already = draft.open.map((p) => `#${p.number} into ${p.base}`).join(", ");
+    if (draft.bases.length === 0 && draft.open.length > 0) {
+      const first = draft.open[0];
+      const go = await ask({
+        title: `${draft.branch} already has an open ${word}`,
+        message: `${already}. There is no other branch on ${draft.targetRemote} to open one into.`,
+        confirm: `Open #${first.number}`,
+      });
+      if (go) await openUrl(first.url).catch(() => {});
+      return;
+    }
     if (draft.bases.length === 0) {
       setError(`${draft.targetRemote} has no branches yet. Push the branch it should go into (such as main) first.`);
       return;
     }
-    const site = SITE_NAMES[draft.host];
-    const word = draft.host === "gitlab" ? "merge request" : "pull request";
     const needsPush = !draft.onRemote || draft.unpushed > 0;
     const notes = [
       !draft.onRemote
@@ -242,6 +282,9 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
           ? `${draft.unpushed} new commit${draft.unpushed === 1 ? " is" : "s are"} pushed to ${draft.remote} first.`
           : "",
       draft.viaApi ? "" : `You finish it on ${site} in your browser.`,
+      draft.open.length
+        ? `Already open: ${already}. ${draft.open.length === 1 ? "That branch is" : "Those branches are"} not offered again.`
+        : "",
     ].filter(Boolean);
     const a = await ask({
       title: `Create ${word} from ${draft.branch}`,
@@ -268,6 +311,7 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
     });
     const pr = out.pr;
     if (!ok || !pr) return;
+    loadPulls(true);
     const number = pr.number ? ` #${pr.number}` : "";
     if (pr.outcome === "openInBrowser") {
       await openUrl(pr.url).catch(() => {});
@@ -440,7 +484,13 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
           ] as MenuItem[])
         : []),
       ...(ref.kind === "localBranch"
-        ? ([{ label: "Create pull request…", onSelect: () => pullRequest(ref.shortName) }] as MenuItem[])
+        ? ([
+            ...(pullsByBranch.get(ref.shortName) ?? []).map((p) => ({
+              label: `Open pull request #${p.number} (into ${p.base})`,
+              onSelect: () => openUrl(p.url),
+            })),
+            { label: "Create pull request…", onSelect: () => pullRequest(ref.shortName) },
+          ] as MenuItem[])
         : []),
       "separator",
       { label: "Copy name", onSelect: () => navigator.clipboard.writeText(ref.shortName) },
@@ -691,8 +741,33 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
               ▾
             </button>
           </span>
-          <button onClick={() => pullRequest()} disabled={!!busy || !current} title="Create a pull request from this branch">
-            Pull request
+          <button
+            onClick={(e) =>
+              currentPulls.length === 0
+                ? pullRequest()
+                : openMenu(e, [
+                    ...currentPulls.map((p) => ({
+                      label: `Open #${p.number}: ${p.title}`,
+                      hint: `into ${p.base}${p.draft ? " · draft" : ""}`,
+                      onSelect: () => openUrl(p.url),
+                    })),
+                    "separator",
+                    { label: "Create pull request…", onSelect: () => pullRequest() },
+                  ])
+            }
+            disabled={!!busy || !current}
+            className={currentPulls.length ? "has-pr" : undefined}
+            title={
+              currentPulls.length
+                ? currentPulls.map((p) => `#${p.number} into ${p.base}: ${p.title}`).join("\n")
+                : "Create a pull request from this branch"
+            }
+          >
+            {currentPulls.length === 0
+              ? "Pull request"
+              : currentPulls.length === 1
+                ? `PR #${currentPulls[0].number}`
+                : `${currentPulls.length} PRs`}
           </button>
         </div>
         <div className="toolbar-group">
@@ -751,6 +826,8 @@ export function RepoView({ path, active, appCommands, onSwitchRepo }: Props) {
         stashMenu={stashMenu}
         openMenu={openMenu}
         onDrop={onDrop}
+        pulls={pullsByBranch}
+        onOpenPull={(p) => openUrl(p.url)}
       />
 
       {diffTarget ? (

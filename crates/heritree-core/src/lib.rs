@@ -25,7 +25,8 @@ pub use files::{FileVersion, find_repositories};
 pub use git_cli::{CommandRecord, command_log};
 pub use graph::{Edge, EdgeKind, GraphRow};
 pub use hosting::{
-    HostKind, HostedRepo, NewPullRequest, PullRequest, PullRequestDraft, PullRequestOutcome,
+    HostKind, HostedRepo, NewPullRequest, OpenPullRequest, PullRequest, PullRequestDraft,
+    PullRequestOutcome,
 };
 pub use lineage::{BranchLineage, LineageSource};
 pub use model::{
