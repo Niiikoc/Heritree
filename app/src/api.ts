@@ -11,6 +11,7 @@ import type {
   FileDiff,
   FileStatus,
   NewPullRequest,
+  OpenPullRequest,
   PullRequest,
   PullRequestDraft,
   LineRef,
@@ -94,6 +95,8 @@ export function repoApi(repo: string) {
     pullRequestDraft: (branch: string | null) => call<PullRequestDraft>("pull_request_draft", { branch }),
     /** Pushes the branch if needed, then creates the pull request or returns the browser page for it. */
     createPullRequest: (request: NewPullRequest) => call<PullRequest>("create_pull_request", { request }),
+    /** Open pull requests from this repository's branches; empty when the site can't be asked. */
+    openPullRequests: () => call<OpenPullRequest[]>("open_pull_requests"),
     stashPush: (message: string | null, includeUntracked: boolean) =>
       call<Undo>("stash_push", { message, includeUntracked }),
     stashApply: (index: number, pop: boolean) => call<void>("stash_apply", { index, pop }),

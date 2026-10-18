@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 
 use heritree_core::{
     BlameLine, BranchLineage, CommandRecord, CommitDetails, CommitInfo, ConflictSide, FileDiff,
-    FileStatus, FileVersion, GraphRow, LineRef, NewPullRequest, PullRequest, PullRequestDraft,
-    RefInfo, RepoInfo, Repository, ResetMode, StashEntry, Undo, UndoAction, graph,
+    FileStatus, FileVersion, GraphRow, LineRef, NewPullRequest, OpenPullRequest, PullRequest,
+    PullRequestDraft, RefInfo, RepoInfo, Repository, ResetMode, StashEntry, Undo, UndoAction,
+    graph,
 };
 use serde::Serialize;
 
@@ -341,6 +342,11 @@ async fn pull_request_draft(repo: String, branch: Option<String>) -> CmdResult<P
 }
 
 #[tauri::command]
+async fn open_pull_requests(repo: String) -> CmdResult<Vec<OpenPullRequest>> {
+    with_repo(repo, |r| r.open_pull_requests()).await
+}
+
+#[tauri::command]
 async fn create_pull_request(repo: String, request: NewPullRequest) -> CmdResult<PullRequest> {
     with_repo(repo, move |r| r.create_pull_request(&request)).await
 }
@@ -394,6 +400,7 @@ pub fn run() {
             watch::watch_repository,
             pull_request_draft,
             create_pull_request,
+            open_pull_requests,
             watch::unwatch_repository,
             file_bytes,
             find_repositories,

@@ -39,25 +39,31 @@ pub fn command_log() -> Vec<CommandRecord> {
 
 /// Runs a read-only `git <args>` in `dir` and returns its stdout. Not logged.
 pub(crate) fn run(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    output(dir, args, None, false)
+    output(dir, args, None, false, &[])
 }
 
 /// Like [`run`] with input on stdin, for commands such as `check-ignore` that
 /// exit with 1 to mean "no match" rather than failure.
 pub(crate) fn run_lenient(dir: &Path, args: &[&str], stdin: &[u8]) -> Result<Vec<u8>> {
-    output(dir, args, Some(stdin), true)
+    output(dir, args, Some(stdin), true, &[])
 }
 
-/// Like [`run`] with input on stdin. Not logged, so it may carry secrets.
-pub(crate) fn run_with_input(dir: &Path, args: &[&str], stdin: &[u8]) -> Result<Vec<u8>> {
-    output(dir, args, Some(stdin), false)
+/// Like [`run`] with input on stdin and extra environment variables. Not
+/// logged, so it may carry secrets.
+pub(crate) fn run_with_input(
+    dir: &Path,
+    args: &[&str],
+    stdin: &[u8],
+    env: &[(&str, &str)],
+) -> Result<Vec<u8>> {
+    output(dir, args, Some(stdin), false, env)
 }
 
 /// Runs a `git` command that changes the repository and records it in the
 /// command log, whether it succeeds or not.
 pub(crate) fn exec(dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>> {
     let started = Instant::now();
-    let result = output(dir, args, stdin, false);
+    let result = output(dir, args, stdin, false, &[]);
     record(dir, shell_words(args), &result, started);
     result
 }
@@ -82,7 +88,13 @@ pub(crate) fn record<T>(dir: &Path, command: String, result: &Result<T>, started
     log.push_back(record);
 }
 
-fn output(dir: &Path, args: &[&str], stdin: Option<&[u8]>, exit_one_ok: bool) -> Result<Vec<u8>> {
+fn output(
+    dir: &Path,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+    exit_one_ok: bool,
+    env: &[(&str, &str)],
+) -> Result<Vec<u8>> {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(dir)
@@ -93,6 +105,7 @@ fn output(dir: &Path, args: &[&str], stdin: Option<&[u8]>, exit_one_ok: bool) ->
         .env("GIT_SEQUENCE_EDITOR", "true")
         .env("GIT_MERGE_AUTOEDIT", "no")
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .envs(env.iter().copied())
         .args(args.iter().map(OsStr::new))
         .stdin(if stdin.is_some() {
             Stdio::piped()

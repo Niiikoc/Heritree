@@ -392,9 +392,16 @@ fn drafts_and_opens_pull_requests() {
             remote.path().to_str().unwrap(),
         ],
     );
-    // No stored credentials, so nothing reaches the network.
+    // No stored credentials, and the API is a local stand-in that knows of
+    // one open pull request from feature/dark-mode into release/1.0.
     git(path, &["config", "credential.helper", ""]);
-    git(path, &["push", "-q", "-u", "origin", "main"]);
+    let api = fake_api(
+        r#"[{"number":9,"title":"Old","html_url":"https://github.com/nick/demo/pull/9","draft":false,
+             "head":{"ref":"feature/dark-mode","repo":{"full_name":"nick/demo"}},"base":{"ref":"release/1.0"}}]"#,
+    );
+    git(path, &["config", "heritree.apiUrl", &api]);
+    git(path, &["branch", "release/1.0"]);
+    git(path, &["push", "-q", "-u", "origin", "main", "release/1.0"]);
 
     repo.create_branch("feature/dark-mode", Some("main"), true)
         .unwrap();
@@ -408,7 +415,10 @@ fn drafts_and_opens_pull_requests() {
     assert_eq!(draft.branch, "feature/dark-mode");
     assert_eq!(draft.host, HostKind::GitHub);
     assert_eq!(draft.web_url, "https://github.com/nick/demo");
+    // release/1.0 already has a pull request from this branch, so it is not offered.
     assert_eq!(draft.bases, ["main"]);
+    assert_eq!(draft.open.len(), 1);
+    assert_eq!(draft.open[0].base, "release/1.0");
     assert_eq!(draft.base.as_deref(), Some("main"));
     assert_eq!(draft.title, "Dark mode");
     assert_eq!(draft.body, "- Add tokens\n- Use tokens");
@@ -428,6 +438,8 @@ fn drafts_and_opens_pull_requests() {
         })
         .unwrap();
     assert_eq!(pr.outcome, PullRequestOutcome::OpenInBrowser);
+    let open = repo.open_pull_requests().unwrap();
+    assert_eq!((open.len(), open[0].number), (1, 9));
     assert!(
         pr.url
             .starts_with("https://github.com/nick/demo/compare/main...feature/dark-mode?expand=1&title=Dark%20mode"),
@@ -466,4 +478,27 @@ fn drafts_and_opens_pull_requests() {
         (draft.title.as_str(), draft.body.as_str()),
         ("Fix login on Safari", "Cookies were blocked.")
     );
+}
+
+/// An HTTP server on localhost that answers every request with `body`.
+fn fake_api(body: &'static str) -> String {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap() > 2 {
+                line.clear();
+            }
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    url
 }

@@ -183,6 +183,9 @@ pub struct PullRequestDraft {
     /// True when Heritree creates the pull request itself; false when the
     /// browser finishes it.
     pub via_api: bool,
+    /// Pull requests already open from this branch. Their bases are not
+    /// offered again.
+    pub open: Vec<OpenPullRequest>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -214,6 +217,20 @@ pub struct PullRequest {
     pub outcome: PullRequestOutcome,
 }
 
+/// A pull request that is open on the hosting site, from a branch of this repository.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenPullRequest {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    /// The branch it comes from.
+    pub branch: String,
+    /// The branch it goes into.
+    pub base: String,
+    pub draft: bool,
+}
+
 impl Repository {
     /// Works out where a pull request for `branch` (default: the current
     /// branch) would go, and drafts its title and description from the commits.
@@ -235,10 +252,16 @@ impl Repository {
             )));
         }
 
+        let open: Vec<OpenPullRequest> = self
+            .list_open(&remote, &target_remote)
+            .into_iter()
+            .filter(|p| p.branch == branch)
+            .collect();
         let bases: Vec<String> = self
             .remote_branches(&target_remote)?
             .into_iter()
             .filter(|b| !(b == &branch && target_remote == remote))
+            .filter(|b| !open.iter().any(|p| &p.base == b))
             .collect();
         let parent = self
             .lineage()
@@ -305,13 +328,53 @@ impl Repository {
             on_remote,
             unpushed,
             via_api,
+            open,
         })
+    }
+
+    /// Open pull requests from branches of this repository, for showing next
+    /// to the branches. Uses only stored credentials, so it never asks to sign
+    /// in, and gives an empty list when the site can't be asked.
+    pub fn open_pull_requests(&self) -> Result<Vec<OpenPullRequest>> {
+        let remote = self.default_remote()?;
+        let target_remote = self.target_remote(&remote);
+        Ok(self.list_open(&remote, &target_remote))
+    }
+
+    fn list_open(&self, remote: &str, target_remote: &str) -> Vec<OpenPullRequest> {
+        let (Ok(head), Ok(target)) = (self.hosted(remote), self.hosted(target_remote)) else {
+            return Vec::new();
+        };
+        let Some(api) = self.api_base(&target) else {
+            return Vec::new();
+        };
+        // Public repositories answer without signing in.
+        let token = self.credential_token(&target.host, false);
+        let client = Client {
+            dir: self.dir(),
+            api: &api,
+            token: token.as_deref(),
+            kind: target.kind,
+        };
+        let listed = match target.kind {
+            HostKind::GitHub => client.github_open(&target, &head),
+            HostKind::GitLab if head == target => client.gitlab_open(&target),
+            _ => Ok(Vec::new()),
+        };
+        listed.unwrap_or_default()
     }
 
     /// Pushes the branch if the remote is missing commits, then opens the pull
     /// request, or returns the browser page that finishes it.
     pub fn create_pull_request(&self, pr: &NewPullRequest) -> Result<PullRequest> {
         let draft = self.pull_request_draft(Some(&pr.branch))?;
+        if let Some(existing) = draft.open.iter().find(|p| p.base == pr.base) {
+            return Ok(PullRequest {
+                url: existing.url.clone(),
+                number: Some(existing.number),
+                outcome: PullRequestOutcome::AlreadyOpen,
+            });
+        }
         if !draft.on_remote || draft.unpushed > 0 {
             self.push_branch(&pr.branch, &draft.remote)?;
         }
@@ -338,16 +401,16 @@ impl Repository {
                 .ok_or_else(|| Error::Hosting(format!("no pull request page for {}", target.host)))
         };
 
-        let (true, Some(api)) = (draft.via_api, target.api_base()) else {
+        let (true, Some(api)) = (draft.via_api, self.api_base(&target)) else {
             return in_browser();
         };
-        let Some(token) = self.credential_token(&target.host) else {
+        let Some(token) = self.credential_token(&target.host, true) else {
             return in_browser();
         };
         let client = Client {
             dir: self.dir(),
             api: &api,
-            token: &token,
+            token: Some(&token),
             kind: target.kind,
         };
         let result = match target.kind {
@@ -359,6 +422,15 @@ impl Repository {
             // Wrong or missing scopes: the browser uses the user's own session.
             Err(ApiError::NotAllowed) => in_browser(),
             Err(ApiError::Failed(message)) => Err(Error::Hosting(message)),
+        }
+    }
+
+    /// `heritree.apiUrl` in git config overrides the site's API address, for
+    /// GitHub Enterprise or GitLab instances behind a different URL.
+    fn api_base(&self, target: &HostedRepo) -> Option<String> {
+        match self.git(&["config", "--get", "heritree.apiUrl"]) {
+            Ok(url) => Some(url.trim().trim_end_matches('/').to_owned()),
+            Err(_) => target.api_base(),
         }
     }
 
@@ -467,12 +539,16 @@ impl Repository {
         self.exec(&args).map(drop)
     }
 
-    /// The token or password git would use for `https://<host>`. Asking may
-    /// show the credential manager's sign-in window. Never logged.
-    fn credential_token(&self, host: &str) -> Option<String> {
+    /// The token or password git would use for `https://<host>`. When
+    /// `interactive`, the credential manager may show its sign-in window;
+    /// otherwise only stored credentials count. Never logged.
+    fn credential_token(&self, host: &str, interactive: bool) -> Option<String> {
         let input = format!("protocol=https\nhost={host}\n\n");
+        let quiet: &[(&str, &str)] = &[("GCM_INTERACTIVE", "never"), ("GIT_ASKPASS", "")];
+        let env = if interactive { &[][..] } else { quiet };
         let out =
-            git_cli::run_with_input(self.dir(), &["credential", "fill"], input.as_bytes()).ok()?;
+            git_cli::run_with_input(self.dir(), &["credential", "fill"], input.as_bytes(), env)
+                .ok()?;
         String::from_utf8_lossy(&out)
             .lines()
             .find_map(|l| l.strip_prefix("password="))
@@ -490,7 +566,8 @@ enum ApiError {
 struct Client<'a> {
     dir: &'a std::path::Path,
     api: &'a str,
-    token: &'a str,
+    /// Missing for public repositories when git has no credentials stored.
+    token: Option<&'a str>,
     kind: HostKind,
 }
 
@@ -602,7 +679,70 @@ impl Client<'_> {
         }
     }
 
-    /// Sends one request and records it in the command log.
+    /// Open pull requests whose branch lives in `head` (the same repository, or a fork).
+    fn github_open(
+        &self,
+        repo: &HostedRepo,
+        head: &HostedRepo,
+    ) -> std::result::Result<Vec<OpenPullRequest>, ApiError> {
+        let url = format!(
+            "{}/repos/{}/pulls?state=open&per_page=100",
+            self.api, repo.path
+        );
+        let (status, body) = self.send("GET", &url, None)?;
+        if !(200..300).contains(&status) {
+            return Err(ApiError::NotAllowed);
+        }
+        Ok(body
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|p| {
+                let from = p["head"]["repo"]["full_name"].as_str().unwrap_or_default();
+                from.eq_ignore_ascii_case(&head.path)
+            })
+            .map(|p| OpenPullRequest {
+                number: p["number"].as_u64().unwrap_or_default(),
+                title: str_field(p, "title"),
+                url: str_field(p, "html_url"),
+                branch: str_field(&p["head"], "ref"),
+                base: str_field(&p["base"], "ref"),
+                draft: p["draft"].as_bool().unwrap_or(false),
+            })
+            .collect())
+    }
+
+    fn gitlab_open(
+        &self,
+        repo: &HostedRepo,
+    ) -> std::result::Result<Vec<OpenPullRequest>, ApiError> {
+        let url = format!(
+            "{}/projects/{}/merge_requests?state=opened&per_page=100",
+            self.api,
+            encode(&repo.path)
+        );
+        let (status, body) = self.send("GET", &url, None)?;
+        if !(200..300).contains(&status) {
+            return Err(ApiError::NotAllowed);
+        }
+        Ok(body
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|m| m["source_project_id"] == m["project_id"])
+            .map(|m| OpenPullRequest {
+                number: m["iid"].as_u64().unwrap_or_default(),
+                title: str_field(m, "title"),
+                url: str_field(m, "web_url"),
+                branch: str_field(m, "source_branch"),
+                base: str_field(m, "target_branch"),
+                draft: m["draft"].as_bool().unwrap_or(false)
+                    || m["work_in_progress"].as_bool().unwrap_or(false),
+            })
+            .collect())
+    }
+
+    /// Sends one request. Requests that change something go in the command log.
     fn send(
         &self,
         method: &str,
@@ -625,18 +765,22 @@ impl Client<'_> {
             HostKind::GitHub => "application/vnd.github+json",
             _ => "application/json",
         };
-        let auth = format!("Bearer {}", self.token);
+        let auth = self.token.map(|t| format!("Bearer {t}"));
         let response = match body {
-            Some(body) => agent
-                .post(url)
-                .header("Authorization", &auth)
-                .header("Accept", accept)
-                .send_json(body),
-            None => agent
-                .get(url)
-                .header("Authorization", &auth)
-                .header("Accept", accept)
-                .call(),
+            Some(body) => {
+                let mut request = agent.post(url).header("Accept", accept);
+                if let Some(auth) = &auth {
+                    request = request.header("Authorization", auth);
+                }
+                request.send_json(body)
+            }
+            None => {
+                let mut request = agent.get(url).header("Accept", accept);
+                if let Some(auth) = &auth {
+                    request = request.header("Authorization", auth);
+                }
+                request.call()
+            }
         };
         let result = response
             .map_err(|e| Error::Hosting(format!("could not reach {url}: {e}")))
@@ -650,7 +794,9 @@ impl Client<'_> {
             Ok((status, _)) => Err(Error::Hosting(format!("HTTP {status}"))),
             Err(e) => Err(Error::Hosting(e.to_string())),
         };
-        git_cli::record(self.dir, format!("{method} {url}"), &logged, started);
+        if method != "GET" {
+            git_cli::record(self.dir, format!("{method} {url}"), &logged, started);
+        }
         result.map_err(|e| ApiError::Failed(e.to_string()))
     }
 }
@@ -875,7 +1021,7 @@ mod tests {
         let client = Client {
             dir: &dir,
             api: &api,
-            token: "t",
+            token: Some("t"),
             kind: HostKind::GitHub,
         };
         let Ok(pr) = client.github(&repo, None, &request()) else {
@@ -904,7 +1050,7 @@ mod tests {
         let client = Client {
             dir: &dir,
             api: &api,
-            token: "t",
+            token: Some("t"),
             kind: HostKind::GitHub,
         };
         let Ok(pr) = client.github(&repo, None, &request()) else {
@@ -923,7 +1069,7 @@ mod tests {
         let client = Client {
             dir: &dir,
             api: &api,
-            token: "t",
+            token: Some("t"),
             kind: HostKind::GitHub,
         };
         match client.github(&repo, None, &request()) {
@@ -937,13 +1083,70 @@ mod tests {
         let client = Client {
             dir: &dir,
             api: &api,
-            token: "t",
+            token: Some("t"),
             kind: HostKind::GitHub,
         };
         assert!(matches!(
             client.github(&repo, None, &request()),
             Err(ApiError::NotAllowed)
         ));
+    }
+
+    #[test]
+    fn lists_open_pull_requests_from_this_repository() {
+        let repo = HostedRepo::parse("https://github.com/nick/heritree").unwrap();
+        let dir = std::env::temp_dir();
+        let (api, _) = serve(vec![(
+            "GET /repos/nick/heritree/pulls?state=open",
+            200,
+            r#"[
+              {"number":12,"title":"Dark mode","html_url":"https://github.com/nick/heritree/pull/12","draft":false,
+               "head":{"ref":"feature/test","repo":{"full_name":"Nick/Heritree"}},"base":{"ref":"develop"}},
+              {"number":13,"title":"From a fork","html_url":"u","draft":true,
+               "head":{"ref":"feature/test","repo":{"full_name":"someone/heritree"}},"base":{"ref":"main"}}
+            ]"#,
+        )]);
+        let client = Client {
+            dir: &dir,
+            api: &api,
+            token: None,
+            kind: HostKind::GitHub,
+        };
+        let Ok(open) = client.github_open(&repo, &repo) else {
+            panic!("list failed")
+        };
+        assert_eq!(
+            open,
+            [OpenPullRequest {
+                number: 12,
+                title: "Dark mode".into(),
+                url: "https://github.com/nick/heritree/pull/12".into(),
+                branch: "feature/test".into(),
+                base: "develop".into(),
+                draft: false,
+            }]
+        );
+
+        let gl = HostedRepo::parse("git@gitlab.com:group/app.git").unwrap();
+        let (api, _) = serve(vec![(
+            "GET /projects/group%2Fapp/merge_requests?state=opened",
+            200,
+            r#"[{"iid":4,"title":"T","web_url":"w","source_branch":"a","target_branch":"main",
+                 "project_id":1,"source_project_id":1,"draft":true},
+                {"iid":5,"title":"Fork","web_url":"w","source_branch":"b","target_branch":"main",
+                 "project_id":1,"source_project_id":9}]"#,
+        )]);
+        let client = Client {
+            dir: &dir,
+            api: &api,
+            token: Some("t"),
+            kind: HostKind::GitLab,
+        };
+        let Ok(open) = client.gitlab_open(&gl) else {
+            panic!("list failed")
+        };
+        assert_eq!(open.len(), 1);
+        assert_eq!((open[0].number, open[0].draft), (4, true));
     }
 
     #[test]
@@ -958,7 +1161,7 @@ mod tests {
         let client = Client {
             dir: &dir,
             api: &api,
-            token: "t",
+            token: Some("t"),
             kind: HostKind::GitLab,
         };
         let Ok(pr) = client.gitlab(&repo, &request()) else {

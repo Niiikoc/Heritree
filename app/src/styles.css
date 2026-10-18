@@ -1595,3 +1595,30 @@ select:focus {
 .toast.notice span {
   flex: 1;
 }
+
+.pr-badge {
+  flex: none;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--accent-text);
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.pr-badge.draft {
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+}
+
+.pr-badge:hover {
+  filter: brightness(1.1);
+}
+
+button.has-pr {
+  border-color: var(--accent);
+  color: var(--accent);
+}
