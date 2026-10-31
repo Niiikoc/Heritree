@@ -1,7 +1,7 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { CommitInfo, LogRow, RefInfo } from "../types";
 import { fullDate, timeAgo } from "../format";
-import { GraphCell, LANE_WIDTH } from "./GraphCell";
+import { GraphCell, LANE_WIDTH, WorktreeCell } from "./GraphCell";
 import { DRAG_TYPE } from "./Sidebar";
 
 export const ROW_HEIGHT = 28;
@@ -69,15 +69,23 @@ export function CommitList({
   );
   // Graph column width: widest row, at least two lanes. Hidden while searching.
   const lanes = useMemo(() => (filtering ? 0 : Math.max(2, ...rows.map((r) => r.graph.width))), [rows, filtering]);
-  const offset = changeCount > 0 && !filtering ? 1 : 0; // the "uncommitted changes" row
-  const total = rows.length + offset;
+  // The "uncommitted changes" row sits just above HEAD, on its branch's lane;
+  // at the top when HEAD is not loaded (unborn branch) or while searching.
+  const headIndex = filtering ? -1 : rows.findIndex((r) => r.commit.id === headId);
+  const wipAt = changeCount === 0 ? -1 : Math.max(0, headIndex);
+  const total = rows.length + (wipAt >= 0 ? 1 : 0);
+  /** Position on screen of the commit at `index` in `rows`. */
+  const displayOf = (index: number) => (wipAt >= 0 && index >= wipAt ? index + 1 : index);
+  /** Commit at a screen position, or `null` for the uncommitted changes row. */
+  const commitAt = (position: number) =>
+    position === wipAt ? null : rows[wipAt >= 0 && position > wipAt ? position - 1 : position];
 
   useEffect(() => {
     const el = scroller.current;
-    if (!el || selectedId === null) return;
-    const index = rows.findIndex((r) => r.commit.id === selectedId);
+    if (!el) return;
+    const index = selectedId === null ? wipAt : displayOf(rows.findIndex((r) => r.commit.id === selectedId));
     if (index < 0) return;
-    const top = (index + offset) * ROW_HEIGHT;
+    const top = index * ROW_HEIGHT;
     if (top < el.scrollTop || top + ROW_HEIGHT > el.scrollTop + el.clientHeight) {
       el.scrollTop = top - el.clientHeight / 3;
     }
@@ -91,15 +99,18 @@ export function CommitList({
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "j" && e.key !== "k") return;
     e.preventDefault();
     const down = e.key === "ArrowDown" || e.key === "j";
-    const current = selectedId === null ? -1 : rows.findIndex((r) => r.commit.id === selectedId);
-    const next = Math.min(rows.length - 1, Math.max(offset ? -1 : 0, current + (down ? 1 : -1)));
-    onSelect(next < 0 ? null : rows[next].commit.id);
+    const current = selectedId === null ? wipAt : displayOf(rows.findIndex((r) => r.commit.id === selectedId));
+    const next = Math.min(total - 1, Math.max(0, current + (down ? 1 : -1)));
+    if (next === current || total === 0) return;
+    onSelect(commitAt(next)?.commit.id ?? null);
   };
 
   const items = [];
   for (let i = first; i < last; i++) {
     const style = { top: i * ROW_HEIGHT, height: ROW_HEIGHT };
-    if (offset && i === 0) {
+    const row = commitAt(i);
+    if (!row) {
+      const head = headIndex >= 0 ? rows[headIndex] : null;
       items.push(
         <div
           key="worktree"
@@ -107,7 +118,9 @@ export function CommitList({
           style={style}
           onClick={() => onSelect(null)}
         >
-          <div className="col-graph" style={{ width: lanes * LANE_WIDTH }} />
+          <div className="col-graph" style={{ width: lanes * LANE_WIDTH }}>
+            {head && <WorktreeCell head={head.graph} height={ROW_HEIGHT} lanes={lanes} />}
+          </div>
           <div className="col-summary">
             <span className="worktree-label">Uncommitted changes ({changeCount})</span>
           </div>
@@ -115,7 +128,7 @@ export function CommitList({
       );
       continue;
     }
-    const { commit, graph } = rows[i - offset];
+    const { commit, graph } = row;
     const refs = refsByCommit.get(commit.id) ?? [];
     const forks = forksByCommit.get(commit.id) ?? [];
     items.push(

@@ -48,3 +48,32 @@ export function GraphCell({ row, height, lanes, isMerge, isHead }: Props) {
     </svg>
   );
 }
+
+interface WorktreeProps {
+  /** The HEAD commit's row, which the uncommitted changes sit just above. */
+  head: GraphRow;
+  height: number;
+  lanes: number;
+}
+
+/**
+ * The "uncommitted changes" node: a hollow dot in HEAD's lane with a dashed
+ * line down to HEAD. Lanes that enter HEAD's row from above pass straight by.
+ */
+export function WorktreeCell({ head, height, lanes }: WorktreeProps) {
+  const x = (lane: number) => lane * LANE_WIDTH + LANE_WIDTH / 2;
+  const mid = height / 2;
+  const color = laneColor(head.color);
+
+  return (
+    <svg className="graph-cell" width={lanes * LANE_WIDTH} height={height} aria-hidden="true">
+      {head.edges
+        .filter((edge) => edge.kind !== "out")
+        .map((edge, i) => (
+          <path key={i} d={`M${x(edge.from)} 0V${height}`} stroke={laneColor(edge.color)} strokeWidth={2} fill="none" />
+        ))}
+      <path d={`M${x(head.lane)} ${mid}V${height}`} stroke={color} strokeWidth={2} strokeDasharray="3 3" fill="none" />
+      <circle cx={x(head.lane)} cy={mid} r={DOT_RADIUS + 1} fill="var(--bg)" stroke={color} strokeWidth={2} strokeDasharray="2 2" />
+    </svg>
+  );
+}
