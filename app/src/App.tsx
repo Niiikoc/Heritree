@@ -4,6 +4,7 @@ import * as api from "./api";
 import type { Answers, AskOptions } from "./ui";
 import { RepoView } from "./RepoView";
 import { Dialog } from "./components/Dialog";
+import { RepoErrorBoundary } from "./components/ErrorBoundary";
 import type { PaletteCommand } from "./components/Palette";
 import { folderName, RepoSwitcher } from "./components/RepoSwitcher";
 
@@ -199,7 +200,9 @@ export function App() {
 
       {/* Every open tab stays mounted, so switching back keeps its selection, diff and undo history. */}
       {tabs.map((t, i) => (
-        <RepoView key={t} path={t} active={i === active} appCommands={appCommands} onSwitchRepo={() => setSwitcherOpen(true)} />
+        <RepoErrorBoundary key={t} path={t} active={i === active}>
+          <RepoView path={t} active={i === active} appCommands={appCommands} onSwitchRepo={() => setSwitcherOpen(true)} />
+        </RepoErrorBoundary>
       ))}
       {active < 0 && (
         <main className="welcome">
