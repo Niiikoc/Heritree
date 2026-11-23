@@ -17,7 +17,11 @@ export function GitLogPanel({ version, onClose }: Props) {
     api.commandLog().then(setRecords, () => {});
   }, [version]);
 
-  useEffect(() => end.current?.scrollIntoView({ block: "end" }), [records]);
+  // Braces matter: newer WebView2 returns a Promise from scrollIntoView, and
+  // React treats anything an effect returns as its clean-up function.
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "end" });
+  }, [records]);
 
   return (
     <section className="git-log" aria-label="Git commands">
